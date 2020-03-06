@@ -1,0 +1,361 @@
+---
+title: "VMWARE Analytics Case Study"
+author: 'Vishva Shah'
+date: "11/13/2019"
+output:
+  pdf_document: 
+    fig_crop: no
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+```
+
+
+\newpage
+# Question 2 (VMWARE Analytics):
+
+# Working on data pre-processing:
+
+## Combining both training and validation data to maintain consistency in pre-processing:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+
+setwd("C:/Users/shahv/OneDrive/Desktop/MSBA/IDS 572/Assignments/Assignment_3")
+
+library(SmartEDA)
+library(readr)
+library(randomForest)
+library(zoo)
+library(mice)
+library(e1071)
+library(dplyr)
+library(tidyr)
+library(factoextra)
+library(PCAmixdata)
+library(caret)
+library(glmnet)
+
+set.seed(1234)
+
+```
+
+# 1. Random Forest:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+TD = read_csv("Training.csv")
+VD = read_csv("Validation.csv")
+
+RFD = rbind.data.frame(TD,VD)
+
+RFD$target = as.factor(RFD$target)
+
+RFD = RFD[,-which(colMeans(is.na(RFD)) > 0)]
+
+RFD %>%
+   mutate_if(is.character, factor)
+
+RFD[sapply(RFD, is.character)] = lapply(RFD[sapply(RFD, is.character)],as.factor)
+
+split(names(RFD),sapply(RFD, function(x) paste(class(x), collapse=" ")))
+
+I = sample(2, nrow(RFD), replace = T, prob = c(0.6,0.4))
+
+T_D = RFD[I == 1,]
+Test_D = RFD[I == 2,]
+
+Model = randomForest(target~., data = T_D, mtry = 5, ntree = 100,importance = T)
+
+summary(Model)
+
+Predict_RF_Train = predict(Model,newdata = T_D, type = "class")
+
+confusionMatrix(Predict_RF_Train, as.factor(T_D$target))
+
+Predict_TEST = predict(Model, newdata = Test_D)
+
+C_M = confusionMatrix(Predict_TEST, Test_D$target)
+
+Accuracy = C_M$overall[1]
+
+Accuracy
+
+```
+
+## We get an accuracy of ~97% on the test data even if we remove columns with missing values.
+
+# 2. Lasso method for Regularization:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+TD = read_csv("Training.csv")
+VD = read_csv("Validation.csv")
+
+RD = rbind.data.frame(TD,VD)
+
+```
+
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+
+RD = RD[,-which(colMeans(is.na(RD)) > 0)]
+
+RD[sapply(RD, is.factor)] = data.matrix(RD[sapply(RD, is.factor)])
+
+RD %>%
+   mutate_if(is.character, factor)
+
+RD[sapply(RD, is.character)] = lapply(RD[sapply(RD, is.character)],as.factor)
+
+ExpData(RD,1)
+
+```
+
+## Applying lasso for variable selection:
+
+## Finding best parameter value for lambda using cross-validation and predicting on the validation set:
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+
+RD$target = as.factor(RD$target)
+  
+Index = sample(2, nrow(RD), replace = T, prob = c(0.6, 0.4))
+Train = RD[Index == 1, ]
+Validation = RD[Index == 2, ]
+
+X = model.matrix(Train$target~. , data = Train)  
+
+V = model.matrix(Validation$target~. , data = Validation)
+
+cvfit = cv.glmnet(X,Train$target, family = "multinomial", type.multinomial = "grouped")
+
+coef(cvfit, s = "lambda.min")
+
+Model_Lasso = glmnet(X, Train$target, alpha = 1,family = "multinomial", type.multinomial = "grouped")
+
+Predict_Lasso = predict(cvfit,newx = V, s = "lambda.min", type = "class")
+
+Result = confusionMatrix(as.factor(Predict_Lasso), Validation$target)
+
+Result$overall
+
+plot(Model_Lasso)
+
+print(Model_Lasso)
+
+plot(cvfit)
+
+```
+
+## 3. Gradient Boosting:
+
+# 1st Gradient Boosting Model – depth =5, eta = 0.001, gamma =3:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+
+TD = read_csv("Training.csv")
+
+GBD = data.frame(TD)
+
+GBD = GBD[,-which(colMeans(is.na(GBD)) > 0)]
+
+GBD[sapply(GBD, is.factor)] = data.matrix(GBD[sapply(GBD, is.factor)])
+
+GBD %>%
+   mutate_if(is.character, factor)
+
+GBD[sapply(GBD, is.character)] = lapply(GBD[sapply(GBD, is.character)],as.factor)
+
+GBD[sapply(GBD, is.factor)] = lapply(GBD[sapply(GBD, is.factor)],as.numeric)
+
+split(names(GBD),sapply(GBD, function(x) paste(class(x), collapse=" ")))
+
+GBD$target = as.factor(GBD$target)
+
+Target = GBD$target
+label = as.integer(GBD$target)-1
+GBD$target = NULL
+
+n = nrow(GBD)
+
+train.index = sample(n,floor(0.65*n))
+train.data = as.matrix(GBD[train.index,])
+train.label = label[train.index]
+test.data = as.matrix(GBD[-train.index,])
+test.label = label[-train.index]
+
+
+xgb.train = xgb.DMatrix(data=train.data,label=train.label)
+xgb.test = xgb.DMatrix(data=test.data,label=test.label)
+
+
+num_class = length(levels(Target))
+params = list( booster="gbtree", eta=0.001, max_depth=5, gamma=3, colsample_bytree=1, objective="multi:softmax",
+  eval_metric="mlogloss", num_class=num_class)
+
+
+xgb.fit=xgb.train(  params=params,   data=xgb.train,  nrounds=10000,  early_stopping_rounds=5, watchlist=list(val1=xgb.train,val2=xgb.test),  verbose=0 )
+
+xgb.fit
+
+xgb.pred = predict(xgb.fit,test.data,reshape=T)
+xgb.pred
+xgb.pred = as.data.frame(xgb.pred)
+colnames(xgb.pred) = levels(Target)
+xgb.pred
+
+xgb.pred$prediction = apply(xgb.pred,1,function(x) colnames(xgb.pred)[which.max(x)])
+xgb.pred$label = levels(Target)[test.label+1]
+xgb.pred
+
+result = sum(xgb.pred$prediction==xgb.pred$label)/nrow(xgb.pred)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+
+```
+
+# 2nd Gradient Boosting Model – depth =3, eta = 0.005, gamma =5:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+params_2 = list( booster="gbtree",   eta=0.005,   max_depth=3,   gamma=5,  colsample_bytree=1, objective="multi:softmax",   eval_metric="mlogloss",   num_class=num_class )
+
+xgb.fit_2=xgb.train(  params=params_2,   data=xgb.train,  nrounds=10000,  early_stopping_rounds=5, watchlist=list(val1=xgb.train,val2=xgb.test),  verbose=0 )
+
+xgb.fit_2
+
+xgb.pred_2 = predict(xgb.fit_2,test.data,reshape=T)
+xgb.pred_2
+
+xgb.pred_2 = as.data.frame(xgb.pred_2)
+colnames(xgb.pred_2) = levels(Target)
+xgb.pred_2
+
+xgb.pred_2$prediction = apply(xgb.pred_2,1,function(x) colnames(xgb.pred_2)[which.max(x)])
+xgb.pred_2$label = levels(Target)[test.label+1]
+xgb.pred_2
+
+result_2 = sum(xgb.pred_2$prediction==xgb.pred_2$label)/nrow(xgb.pred_2)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result_2)))
+```
+
+# Performing PCA:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+TD = read_csv("Training.csv")
+VD = read_csv("Validation.csv")
+
+Data = rbind.data.frame(TD,VD)
+```
+
+
+## Finding missing values:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+ExpData(TD,1)
+```
+
+## There are 44 variables with missing values more than 50% and 11 variables with missing values more tha 90%. We will just remove these variables. 
+
+## Removing the target variable and columns with unknown values:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+Data = Data[,-which(colMeans(is.na(Data)) > 0)]
+
+Data_1 = Data[ ,!(names(Data) %in% c("target","db_industry","gu_emp_segment_desc","idc_verticals"))]
+
+which(is.na(Data_1))
+
+ExpData(Data_1,1)
+```
+
+# Conducting Principle component analysis:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+
+PCA = prcomp(Data_1)
+
+names(PCA)
+
+# Eigen Values:
+
+Eig = (PCA$sdev)^2
+
+# Variances in percentage
+
+Variance = Eig*100/sum(Eig)
+
+# Cumulative variances
+cumvar = cumsum(Variance)
+
+New_Data = data.frame(eigenvalues = Eig, variance = Variance, cumulative_variance = cumvar) 
+head(New_Data)
+
+fviz_screeplot(PCA, ncp = 10)
+
+plot(cumvar, type = "b")
+abline(h=0.975,col='red',v=8)
+
+```
+
+\newpage
+
+# Building a random forest model on the PCA data:
+
+```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+# Using training and test split:
+set.seed(1234)
+PCA_Data = data.frame(target = Data$target, PCA$x)
+Ind = sample(2, nrow(PCA_Data), replace = T, prob = c(0.6,0.4))
+
+Train_data = PCA_Data[Ind == 1,]
+Test_data = PCA_Data[Ind == 2,]
+
+Train_data$target = as.factor(Train_data$target)
+Test_data$target = as.factor(Test_data$target)
+
+Model_RF = randomForest(target~., data = Train_data, mtry = 5, ntree = 100,importance = T, replace = T)
+
+Pred = predict(Model_RF, newdata = Train_data)
+
+confusionMatrix(Pred, Train_data$target)
+
+Pred_Test = predict(Model_RF, newdata = Test_data)
+
+Confusion_Matrix = confusionMatrix(Pred_Test, Test_data$target)
+
+Accuracy_RF = Confusion_Matrix$overall[1]
+
+Accuracy_RF
+
+
+# Using k-fold:
+
+folds = cut(seq(1,nrow(PCA_Data)),breaks=10,labels=FALSE) 
+folds
+
+Model_Err = c()
+
+k = 10
+Ntree = 100
+NS = 5
+
+for (i in 1:k) {
+  
+  Index = which(folds==i, arr.ind=TRUE)
+  Train_set_RF_1 = PCA_Data[-Index,]
+  Test_Set_RF_1 = PCA_Data[Index,]
+ 
+        Model_RF = randomForest(target~.,data = Train_1, ntree = Ntree,mtry= sqrt(ncol(Train_1)),
+                                importance = T,replace = T)
+
+        Predict_Test = predict(Model_RF, newdata = Test_Set_RF_1)
+ 
+        MSE = mean((Test_Set_RF_1$target != Predict_Test)^2)
+        Model_Err = rbind(Model_Err,MSE)
+}
+    
+mean(Model_Err)
+
+```
+
+## The accuracy is ~97% for test data and 100% in train data after applying PCA.
