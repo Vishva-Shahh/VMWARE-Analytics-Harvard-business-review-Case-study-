@@ -24,7 +24,7 @@ options(tinytex.verbose = TRUE)
 
 ```{r,tidy=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
 
-setwd("C:/Users/shahv/OneDrive/Desktop/MSBA/IDS 572/Assignments/Assignment_3")
+setwd("Your_Path")
 
 library(SmartEDA)
 library(readr)
