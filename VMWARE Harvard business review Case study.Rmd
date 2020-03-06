@@ -358,4 +358,3 @@ mean(Model_Err)
 
 ```
 
-## The accuracy is ~97% for test data and 100% in train data after applying PCA.
